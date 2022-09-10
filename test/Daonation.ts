@@ -26,6 +26,14 @@ describe("Daonation", function () {
     const Daonation = await ethers.getContractFactory("Daonation");
     const daonation = await Daonation.deploy(daonationToken.address, timeLock.address);
 
+    const proposerRole = await timeLock.PROPOSER_ROLE()
+    const executorRole = await timeLock.EXECUTOR_ROLE()
+    const adminRole = await timeLock.TIMELOCK_ADMIN_ROLE()
+
+    await timeLock.grantRole(proposerRole, daonation.address)
+    await timeLock.grantRole(executorRole, ethers.constants.AddressZero)
+    await timeLock.revokeRole(adminRole, owner.address)
+    
     return { owner, otherAccount, daonationToken, daonation };
   }
 
