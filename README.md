@@ -1,3 +1,3 @@
 # DAOnation
 
-DAOnation comes as a decentralized solution for people who seeks help with social whip-rounds (such as NGOs) to find donors, people who have money to do it and want to help but seeks to do that to meaningful and trustworthy projects. Our goal is to create a platform where whip-rounds can be posted and after being voted by governance token holders, they will be available for users to donate, ensuring the proper use of their assets to the benefit of those in need.
+DAOnation comes as a decentralized solution for people who seeks help with social whip-rounds (such as NGOs) to find donors, people who have money to do it and want to help but seeks to do that to meaningful and trustworthy projects using blockchain. Our goal is to create a platform where whip-rounds can be posted and after being voted by governance token holders, they will be available for users to donate, ensuring the proper use of their assets to the benefit of those in need.
