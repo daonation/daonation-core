@@ -2,115 +2,193 @@ import { time, loadFixture } from "@nomicfoundation/hardhat-network-helpers";
 import { expect } from "chai";
 import { ethers } from "hardhat";
 
-async function mineNBlocks(n:number) {
-  for (let index = 0; index < n; index++) {
-    await ethers.provider.send('evm_mine', []);
-  }
+const { parseEther } = ethers.utils
+const { MaxUint256 } = ethers.constants
+
+async function mineNBlocks(n: number) {
+    for (let index = 0; index < n; index++) {
+        await ethers.provider.send('evm_mine', []);
+    }
 }
 
 describe("Daonation", function () {
-  // We define a fixture to reuse the same setup in every test.
-  // We use loadFixture to run this setup once, snapshot that state,
-  // and reset Hardhat Network to that snapshopt in every test.
-  async function deploy() {
+    // We define a fixture to reuse the same setup in every test.
+    // We use loadFixture to run this setup once, snapshot that state,
+    // and reset Hardhat Network to that snapshopt in every test.
+    async function deploy() {
 
-    // Contracts are deployed using the first signer/account by default
-    const [owner, otherAccount, beficiary1, beficiary2, donor1, donor2] = await ethers.getSigners();
+        // Contracts are deployed using the first signer/account by default
+        const [owner, otherAccount, beficiary1, beficiary2, donor1, donor2] = await ethers.getSigners();
 
-    const DaonationToken = await ethers.getContractFactory("DaonationToken");
-    const daonationToken = await DaonationToken.deploy();
+        const DaonationToken = await ethers.getContractFactory("DaonationToken");
+        const daonationToken = await DaonationToken.deploy();
 
-    const StableMockToken = await ethers.getContractFactory("MockToken");
-    const stableMockToken = await StableMockToken.deploy('StableMock','STM')
+        const StableMockToken = await ethers.getContractFactory("MockToken");
+        const stableMockToken = await StableMockToken.deploy('StableMock', 'STM')
+        await stableMockToken.mint(donor1.address, parseEther('100000'))
+        await stableMockToken.mint(donor2.address, parseEther('100000'))
 
-    const VaquinhaLibrary = await ethers.getContractFactory("VaquinhaLibrary")
-    const vaquinhaLibrary = await VaquinhaLibrary.deploy()
+        const VaquinhaLibrary = await ethers.getContractFactory("VaquinhaLibrary")
+        const vaquinhaLibrary = await VaquinhaLibrary.deploy()
 
-    const Daonation = await ethers.getContractFactory("Daonation", {
-      libraries: {
-        VaquinhaLibrary: vaquinhaLibrary.address,
-      },
-    })
+        const Daonation = await ethers.getContractFactory("Daonation", {
+            libraries: {
+                VaquinhaLibrary: vaquinhaLibrary.address,
+            },
+        })
 
-    const votationPeriod = 4*24*3600
-    const proposalLockPeriod = 7*24*3600
-    const votationTokenRewardRatio = 100 //1%
-    const donationPeriod = 7*24*3600
-    const daonation = await Daonation.deploy(
-      daonationToken.address,
-      stableMockToken.address,
-      votationPeriod,
-      ethers.utils.parseEther('10000'),
-      proposalLockPeriod,
-      votationTokenRewardRatio,
-      donationPeriod
-    );
+        const votationPeriod = 4 * 24 * 3600
+        const proposalLockPeriod = 7 * 24 * 3600
+        const votationTokenRewardRatio = 100 //1%
+        const donationPeriod = 7 * 24 * 3600
+        const daonation = await Daonation.deploy(
+            daonationToken.address,
+            stableMockToken.address,
+            votationPeriod,
+            ethers.utils.parseEther('10000'),
+            proposalLockPeriod,
+            votationTokenRewardRatio,
+            donationPeriod
+        );
 
-    await daonationToken.approve(daonation.address, ethers.constants.MaxUint256)
-    await daonation.addGovernanceTokenRewards(ethers.utils.parseEther('100'))
-    
-    return { owner, otherAccount, daonationToken, daonation, beficiary1, beficiary2, donor1, donor2, votationPeriod };
-  }
+        await daonationToken.connect(owner).approve(daonation.address, MaxUint256)
+        await daonationToken.connect(otherAccount).approve(daonation.address, MaxUint256)
+        await daonationToken.connect(donor1).approve(daonation.address, MaxUint256)
+        await daonationToken.connect(donor2).approve(daonation.address, MaxUint256)
 
-  describe("Deployment", function () {
+        await stableMockToken.connect(owner).approve(daonation.address, MaxUint256)
+        await stableMockToken.connect(otherAccount).approve(daonation.address, MaxUint256)
+        await stableMockToken.connect(donor1).approve(daonation.address, MaxUint256)
+        await stableMockToken.connect(donor2).approve(daonation.address, MaxUint256)
 
-    it("Should be deployed", async function () {
-      
-      const { daonation } = await loadFixture(deploy);
+        await daonation.addGovernanceTokenRewards(ethers.utils.parseEther('100'))
 
-      expect(daonation.address).to.not.undefined
+        return {
+            owner, otherAccount, daonationToken, daonation,
+            beficiary1, beficiary2, donor1, donor2,
+            votationPeriod, donationPeriod, votationTokenRewardRatio,
+            stableMockToken
+        };
+    }
 
-    });
+    describe("Deployment", function () {
 
-    it("Should be possible to propose a vaquinha", async function () {
-      
-      const { daonation, beficiary1 } = await loadFixture(deploy);
+        it("Should be deployed", async function () {
 
-      const expectedValue = ethers.utils.parseEther('5000')
-      await daonation.proposeVaquinha("test", expectedValue, beficiary1.address)
+            const { daonation } = await loadFixture(deploy);
 
-      const vaquinhasCount = await daonation.vaquinhasCount()
+            expect(daonation.address).to.not.undefined
 
-      expect(vaquinhasCount).to.eq(1)
-      
-      const vaquinhaId = vaquinhasCount.sub(1)
-
-      const vaquinha = await daonation.vaquinhas(vaquinhaId)
-      expect(vaquinha.description).to.be.eq("test")
-      expect(vaquinha.expectedValue).to.be.eq(expectedValue)
-      expect(await daonation.isVoting(vaquinhaId)).to.be.true
+        });
 
     });
 
-    it("Should be possible to vote and approve a vaquinha.", async function () {
-      
-      const { daonation, daonationToken, owner, beficiary1, votationPeriod } = await loadFixture(deploy);
+    describe("Simple Scenarios", function () {
 
-      const expectedValue = ethers.utils.parseEther('5000')
-      await daonation.proposeVaquinha("test", expectedValue, beficiary1.address)
+        it("Should be possible to propose a vaquinha", async function () {
 
-      const vaquinhasCount = await daonation.vaquinhasCount()
-      const vaquinhaId = vaquinhasCount.sub(1)
+            const { daonation, beficiary1 } = await loadFixture(deploy);
 
-      const vaquinha = await daonation.vaquinhas(vaquinhaId)
-      expect(await daonation.isDonating(vaquinhaId)).to.be.false
+            const expectedValue = ethers.utils.parseEther('5000')
+            await daonation.proposeVaquinha("test", expectedValue, beficiary1.address)
 
-      await daonationToken.approve(daonation.address, ethers.constants.MaxUint256)
-      const initialDaonationTokenBalance = await daonationToken.balanceOf(owner.address)
-      const daonationTokenForVoting = initialDaonationTokenBalance.div(10)
-      await daonation.voteForVaquinha(vaquinhaId, daonationTokenForVoting);
-      const finalDaonationTokenBalance = await daonationToken.balanceOf(owner.address)
+            const vaquinhasCount = await daonation.vaquinhasCount()
 
-      expect(initialDaonationTokenBalance.sub(daonationTokenForVoting))
-        .to.be.eq(finalDaonationTokenBalance)
+            expect(vaquinhasCount).to.eq(1)
 
-      expect(await daonation.isDonating(vaquinhaId)).to.be.false
+            const vaquinhaId = vaquinhasCount.sub(1)
 
-      await time.increase(votationPeriod+1)
+            const vaquinha = await daonation.vaquinhas(vaquinhaId)
+            expect(vaquinha.description).to.be.eq("test")
+            expect(vaquinha.expectedValue).to.be.eq(expectedValue)
+            expect(await daonation.isVoting(vaquinhaId)).to.be.true
 
-      expect(await daonation.isDonating(vaquinhaId)).to.be.true
+        });
+
+        it("Should be possible to vote and approve a vaquinha.", async function () {
+
+            const { daonation, daonationToken, owner, beficiary1, votationPeriod } = await loadFixture(deploy);
+
+            const expectedValue = ethers.utils.parseEther('5000')
+            await daonation.proposeVaquinha("test", expectedValue, beficiary1.address)
+
+            const vaquinhasCount = await daonation.vaquinhasCount()
+            const vaquinhaId = vaquinhasCount.sub(1)
+
+            const vaquinha = await daonation.vaquinhas(vaquinhaId)
+            expect(await daonation.isDonating(vaquinhaId)).to.be.false
+
+            await daonationToken.approve(daonation.address, ethers.constants.MaxUint256)
+            const initialDaonationTokenBalance = await daonationToken.balanceOf(owner.address)
+            const daonationTokenForVoting = initialDaonationTokenBalance.div(10)
+            await daonation.voteForVaquinha(vaquinhaId, daonationTokenForVoting);
+            const finalDaonationTokenBalance = await daonationToken.balanceOf(owner.address)
+
+            expect(initialDaonationTokenBalance.sub(daonationTokenForVoting))
+                .to.be.eq(finalDaonationTokenBalance)
+
+            expect(await daonation.isDonating(vaquinhaId)).to.be.false
+
+            await time.increase(votationPeriod + 1)
+
+            expect(await daonation.isDonating(vaquinhaId)).to.be.true
+
+        });
+
+        it("Should be possible to donate to vaquinha.", async function () {
+
+            const {
+                daonation, daonationToken, owner, beficiary1,
+                votationPeriod, donationPeriod, votationTokenRewardRatio,
+                donor1, stableMockToken
+            } = await loadFixture(deploy);
+
+            const expectedValue = ethers.utils.parseEther('5000')
+            await daonation.proposeVaquinha("test", expectedValue, beficiary1.address)
+
+            const vaquinhasCount = await daonation.vaquinhasCount()
+            const vaquinhaId = vaquinhasCount.sub(1)
+
+            const vaquinha = await daonation.vaquinhas(vaquinhaId)
+
+            await daonationToken.approve(daonation.address, ethers.constants.MaxUint256)
+            const initialDaonationTokenBalance = await daonationToken.balanceOf(owner.address)
+            const daonationTokenForVoting = initialDaonationTokenBalance.div(10)
+            await daonation.voteForVaquinha(vaquinhaId, daonationTokenForVoting);
+
+            await time.increase(votationPeriod + 1)
+
+            const initialDonorStableTokenBalance = await stableMockToken.balanceOf(donor1.address)
+            const initialDaonationStableTokenBalance = await stableMockToken.balanceOf(daonation.address)
+            const initialDaonationGovernanceTokenBalance = await daonationToken.balanceOf(daonation.address)
+            const initialDonorGovernanceTokenBalance = await daonationToken.balanceOf(donor1.address)
+            const donationAmount = parseEther('100')
+            const expectedReward = donationAmount.mul(votationTokenRewardRatio).div(await daonation.UNIT_REWARD_RATIO())
+            const initialAvailableRewards = await daonation.availableRewards()
+            const initialVaquinhaDonations = await (await daonation.vaquinhas(vaquinhaId)).donations
+            await daonation.connect(donor1).donate(vaquinhaId, donationAmount)
+            const finalDonorStableTokenBalance = await stableMockToken.balanceOf(donor1.address)
+            const finalDaonationStableTokenBalance = await stableMockToken.balanceOf(daonation.address)
+            const finalDaonationGovernanceTokenBalance = await daonationToken.balanceOf(daonation.address)
+            const finalDonorGovernanceTokenBalance = await daonationToken.balanceOf(donor1.address)
+            const finalAvailableRewards = await daonation.availableRewards()
+            const finalVaquinhaDonations = await (await daonation.vaquinhas(vaquinhaId)).donations
+
+            expect(initialDonorStableTokenBalance.sub(donationAmount))
+                .to.be.eq(finalDonorStableTokenBalance, "Donor stable token balance should be the expected")
+            expect(initialDaonationStableTokenBalance.add(donationAmount))
+                .to.be.eq(finalDaonationStableTokenBalance, "Daonation stable token balance should be the expected")
+            expect(initialDaonationGovernanceTokenBalance.sub(expectedReward))
+                .to.be.eq(finalDaonationGovernanceTokenBalance, "Daonation governance token balance should be the expected")
+            expect(initialDonorGovernanceTokenBalance.add(expectedReward))
+                .to.be.eq(finalDonorGovernanceTokenBalance, "Donor governance token balance should be the expected")
+            expect(initialAvailableRewards.sub(expectedReward))
+                .to.be.eq(finalAvailableRewards, "Registered available reward should be the expected")
+            expect(initialVaquinhaDonations.add(donationAmount))
+                .to.be.eq(finalVaquinhaDonations, "Registered vaquinha donations should be the expected")
+
+        });
 
     });
 
-  });
 });

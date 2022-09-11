@@ -31,7 +31,7 @@ contract Daonation is IDaonation {
     uint256 public vaquinhasCount;
 
     uint16 public votationTokenRewardRatio;
-    uint16 constant UNIT_REWARD_RATIO = 10000;
+    uint16 public constant UNIT_REWARD_RATIO = 10000;
 
     uint256 public availableRewards = 0;
 
