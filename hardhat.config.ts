@@ -15,6 +15,9 @@ const config: HardhatUserConfig = {
       },
     },
   },
+  typechain: {
+    outDir: 'typechain/typechain-types'
+  },
   networks: {
     mainnet: {
       url: process.env.MAINNET_URL,

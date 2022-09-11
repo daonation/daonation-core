@@ -1,177 +1,177 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.2;
 
-import "@openzeppelin/contracts/governance/Governor.sol";
-import "@openzeppelin/contracts/governance/compatibility/GovernorCompatibilityBravo.sol";
-import "@openzeppelin/contracts/governance/extensions/GovernorVotes.sol";
-import "@openzeppelin/contracts/governance/extensions/GovernorVotesQuorumFraction.sol";
-import "@openzeppelin/contracts/governance/extensions/GovernorTimelockControl.sol";
+import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 import {IDaonation} from "./IDaonation.sol";
+import {VaquinhaLibrary} from "./VaquinhaLibrary.sol";
 
-import "hardhat/console.sol";
+contract Daonation is IDaonation {
 
-contract Daonation is Governor, GovernorCompatibilityBravo, GovernorVotes, GovernorVotesQuorumFraction, GovernorTimelockControl, IDaonation {
+    using SafeERC20 for ERC20;
     
-    constructor(IVotes _token, TimelockController _timelock)
-        Governor("Daonation")
-        GovernorVotes(_token)
-        GovernorVotesQuorumFraction(1)
-        GovernorTimelockControl(_timelock)
-    {
-    }
+    ERC20 public votationToken;
+    ERC20 public donationToken;
 
-    function votingDelay() public pure override returns (uint256) {
-        return 0; // delay in blocks when proposal can be voted
-    }
+    uint64 public votationPeriod; // in seconds
+    uint256 public tokensToCreateProposal;
 
-    function votingPeriod() public pure override returns (uint256) {
-        return 2;//46027; // 1 week
-    }
+    // in seconds: The period that tokens used for proposal creation will be locked
+    uint64 public proposalLockPeriod; // TODO Use it.
 
-    function proposalThreshold() public pure override returns (uint256) {
-        return 0;
-    }
+    uint64 public donationPeriod; // in seconds
 
-    // The functions below are overrides required by Solidity.
+    using VaquinhaLibrary for VaquinhaLibrary.Vaquinha;
 
-    function quorum(uint256 blockNumber)
-        public
-        view
-        override(IGovernor, GovernorVotesQuorumFraction)
-        returns (uint256)
-    {
-        return super.quorum(blockNumber);
-    }
-
-    function getVotes(address account, uint256 blockNumber)
-        public
-        view
-        override(IGovernor, Governor)
-        returns (uint256)
-    {
-        return super.getVotes(account, blockNumber);
-    }
-
-    function state(uint256 proposalId)
-        public
-        view
-        override(Governor, IGovernor, GovernorTimelockControl)
-        returns (ProposalState)
-    {
-        console.log('super.state(proposalId)', uint256(super.state(proposalId)));
-        return super.state(proposalId);
-    }
-
-    function propose(address[] memory /*targets*/, uint256[] memory /*values*/, bytes[] memory /*calldatas*/, string memory /*description*/)
-        public pure
-        override(Governor, GovernorCompatibilityBravo, IGovernor)
-        returns (uint256)
-    {
-        revert('ONLY PRIVATE USAGE');
-    }
-
-    struct Vaquinha{
-        string description;
-        uint256 expectedValue;
-        bool aprovada;
-        uint256 proposal;
-    }
+    mapping(uint256 => mapping(address => uint256)) lockedTokensByVaquinha;
 
     mapping(uint256 => uint256) public vaquinhaByProposal;
-    Vaquinha[] public vaquinhas;
+    VaquinhaLibrary.Vaquinha[] public vaquinhas;
     uint256 public vaquinhasCount;
 
-    event VaquinhaProposalCreated(address indexed creator, uint256 indexed vaquinhaId, uint256 indexed proposal);
+    uint16 public votationTokenRewardRatio;
+    uint16 constant UNIT_REWARD_RATIO = 10000;
 
-    function _createVaquinha(string memory description, uint256 expectedValue) internal returns (uint256){
+    uint256 public availableRewards = 0;
+
+    constructor(
+        ERC20 _votationToken,
+        ERC20 _donationToken,
+        uint64 _votationPeriod,
+        uint256 _tokensToCreateProposal,
+        uint64 _proposalLockPeriod,
+        uint16 _votationTokenRewardRatio,
+        uint64 _donationPeriod
+    )
+    {
+        votationToken = _votationToken;
+        votationPeriod = _votationPeriod;
+        tokensToCreateProposal = _tokensToCreateProposal;
+        proposalLockPeriod = _proposalLockPeriod;
+        donationToken = _donationToken;
+        votationTokenRewardRatio = _votationTokenRewardRatio;
+        donationPeriod = _donationPeriod;
+    }
+
+    event RewardsAdded(address sender, uint256 rewardsAmount);
+
+    function addGovernanceTokenRewards(
+        uint256 rewardsAmount
+    ) public {
+        votationToken.safeTransferFrom(msg.sender, address(this), rewardsAmount);
+        availableRewards+=rewardsAmount;
+        emit RewardsAdded(msg.sender, rewardsAmount);
+    }
+
+    function _createVaquinha(string memory description, uint256 expectedValue, address donationsTo) internal returns (uint256){
         uint256 vaquinhaId = vaquinhasCount;
-        vaquinhas.push(Vaquinha({
+        vaquinhas.push(VaquinhaLibrary.Vaquinha({
             description: description,
             expectedValue: expectedValue,
-            aprovada: false,
-            proposal: 0
+            votationEndTimestamp: block.timestamp + votationPeriod,
+            donationEndTimestamp: block.timestamp + votationPeriod + donationPeriod,
+            aprovadores: 0,
+            detratores: 0,
+            donations: 0,
+            donationsTo: donationsTo,
+            donationsRedeemed: false
         }));
         vaquinhasCount++;
         return vaquinhaId;
     }
 
-    function aprovarVaquinha(uint256 vaquinhaId) public {
-        require(msg.sender == address(this) || msg.sender == address(timelock()));
-        vaquinhas[vaquinhaId].aprovada = true;
-    } 
+    event VaquinhaProposalCreated(address indexed creator, uint256 indexed vaquinhaId);
 
-    function proposeVaquinha(string memory description, uint256 expectedValue) public returns (uint256){
-        uint256 vaquinhaId = _createVaquinha(description, expectedValue);
-        address[] memory targets = new address[](1);
-        targets[0] = address(this);
-        uint256[] memory values = new uint256[](1);
-        values[0] = 0;
-        bytes[] memory calldatas = new bytes[](1);
-        calldatas[0] = abi.encodeWithSelector(
-            this.aprovarVaquinha.selector,
-            vaquinhaId
-        );
-        uint256 proposal = super.propose(targets, values, calldatas, description);
-        vaquinhas[vaquinhaId].proposal = proposal;
-        vaquinhaByProposal[proposal] = vaquinhaId;
-        emit VaquinhaProposalCreated(msg.sender, vaquinhaId, proposal);
-        return proposal;
+    function proposeVaquinha(
+        string memory description,
+        uint256 expectedValue,
+        address donationsTo
+    ) public returns (uint256){
+        uint256 vaquinhaId = _createVaquinha(description, expectedValue, donationsTo);
+        _lockTokensTo(vaquinhaId, tokensToCreateProposal);
+        emit VaquinhaProposalCreated(msg.sender, vaquinhaId);
+        return vaquinhaId;
     }
 
-    function _aprovarVaquinhaByProposal(uint256 proposalId) public {
-        uint256 vaquinhaId = vaquinhaByProposal[proposalId];
-        vaquinhas[vaquinhaId].aprovada = true;
+    function _lockTokensTo(uint256 vaquinhaId, uint256 tokensToLock) internal{
+        lockedTokensByVaquinha[vaquinhaId][msg.sender] = tokensToLock;
+        votationToken.safeTransferFrom(msg.sender, address(this), tokensToLock);
     }
 
-    function _execute(uint256 proposalId, address[] memory targets, uint256[] memory values, bytes[] memory calldatas, bytes32 descriptionHash)
-        internal
-        override(Governor, GovernorTimelockControl)
-    {
-        // _aprovarVaquinhaByProposal(proposalId);
-        // // TODO Verify if should be removed.
-        super._execute(proposalId, targets, values, calldatas, descriptionHash);
+    event VoteForVaquinha(uint256 indexed vaquinhaId, uint256 tokensUsed);
+
+    function voteForVaquinha(uint256 vaquinhaId, uint256 tokensToUse) public{
+        VaquinhaLibrary.Vaquinha storage vaquinha = vaquinhas[vaquinhaId];
+        require(vaquinha.votation(), "NOT VOTATION PERIOD");
+        _lockTokensTo(vaquinhaId, tokensToUse);
+        vaquinha.aprovadores += tokensToUse;
+        emit VoteForVaquinha(vaquinhaId, tokensToUse);
     }
 
-    function _cancel(address[] memory targets, uint256[] memory values, bytes[] memory calldatas, bytes32 descriptionHash)
-        internal
-        override(Governor, GovernorTimelockControl)
-        returns (uint256)
-    {
-        // TODO Verify if should be removed.
-        return super._cancel(targets, values, calldatas, descriptionHash);
+    event VoteAgainstVaquinha(uint256 indexed vaquinhaId, uint256 tokensUsed);
+
+    function voteAgainstVaquinha(uint256 vaquinhaId, uint256 tokensToUse) public{
+        VaquinhaLibrary.Vaquinha storage vaquinha = vaquinhas[vaquinhaId];
+        require(vaquinha.votation(), "NOT VOTATION PERIOD");
+        _lockTokensTo(vaquinhaId, tokensToUse);
+        vaquinha.aprovadores += tokensToUse;
+        emit VoteAgainstVaquinha(vaquinhaId, tokensToUse);
     }
 
-    function _executor()
-        internal
-        view
-        override(Governor, GovernorTimelockControl)
-        returns (address)
-    {
-        return super._executor();
+    event UnlockedTokens(address indexed to, uint256 unlockedAmount);
+
+    function unlockTokens(uint256 vaquinhaId) public{
+        VaquinhaLibrary.Vaquinha storage vaquinha = vaquinhas[vaquinhaId];
+        require(!vaquinha.votation(), "VOTATION PERIOD");
+        uint256 toUnlock = lockedTokensByVaquinha[vaquinhaId][msg.sender];
+        require(toUnlock > 0, "NO TOKENS TO UNLOCK");
+        votationToken.safeTransfer(msg.sender, toUnlock);
+        lockedTokensByVaquinha[vaquinhaId][msg.sender] = 0;
+        emit UnlockedTokens(msg.sender, toUnlock);
     }
 
-    function supportsInterface(bytes4 interfaceId)
-        public
-        view
-        override(Governor, IERC165, GovernorTimelockControl)
-        returns (bool)
-    {
-        return super.supportsInterface(interfaceId);
+    event Donation(
+        uint256 indexed vaquinhaId,
+        address indexed donor,
+        address donationToken,
+        uint256 donationAmount
+    );
+
+    function donate(uint256 vaquinhaId, uint256 donationAmount) external{
+        VaquinhaLibrary.Vaquinha storage vaquinha = vaquinhas[vaquinhaId];
+        require(vaquinha.donating(), "NOT DONATING STATUS");
+        vaquinha.donations+=donationAmount;
+        donationToken.safeTransferFrom(msg.sender, address(this), donationAmount);
+        uint256 votationTokenReward = donationAmount * votationTokenRewardRatio / UNIT_REWARD_RATIO;
+        votationTokenReward = votationTokenReward > availableRewards ? availableRewards : votationTokenReward;
+        if (votationTokenReward==0)
+            return;
+        votationToken.safeTransfer(msg.sender, votationTokenReward);
+        availableRewards-=votationTokenReward;
+        emit Donation(vaquinhaId, msg.sender, address(donationToken), donationAmount);
     }
 
-    function votarAprovarVaquinha(uint256 vaquinhaId) public{
-        castVote(vaquinhas[vaquinhaId].proposal, 1);
+    event DonationRedeemed(uint256 indexed vaquinhaId, address indexed donationsTo, uint256 donationsAmount);
+
+    function redeemDonations(uint256 vaquinhaId) external{
+        VaquinhaLibrary.Vaquinha storage vaquinha = vaquinhas[vaquinhaId];
+        require(vaquinha.finished(), "NOT FINISHED STATUS");
+        require(msg.sender == vaquinha.donationsTo, "NOT BENEFICIARY");
+        require(!vaquinha.donationsRedeemed, "DONATIONS ALREADY REDEEMED");
+        require(vaquinha.donations > 0, "NO DONATIONS");
+        donationToken.safeTransfer(vaquinha.donationsTo, vaquinha.donations);
+        vaquinha.donationsRedeemed = true;
+        emit DonationRedeemed(vaquinhaId, vaquinha.donationsTo, vaquinha.donations);
     }
 
-    function votarRejeitarVaquinha(uint256 vaquinhaId) public{
-        castVote(vaquinhas[vaquinhaId].proposal, 0);
+
+    function isVoting(uint256 vaquinhaId) public view returns(bool) {
+        return vaquinhas[vaquinhaId].votation();
     }
 
-    function executarAprovacaoVaquinha(uint256 vaquinhaId) public{
-        uint256 proposal = vaquinhas[vaquinhaId].proposal;
-        queue(proposal);
-        execute(proposal);
+    function isDonating(uint256 vaquinhaId) public view returns(bool) {
+        return vaquinhas[vaquinhaId].donating();
     }
 
 }

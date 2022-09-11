@@ -15,29 +15,44 @@ describe("Daonation", function () {
   async function deploy() {
 
     // Contracts are deployed using the first signer/account by default
-    const [owner, otherAccount] = await ethers.getSigners();
+    const [owner, otherAccount, beficiary1, beficiary2, donor1, donor2] = await ethers.getSigners();
 
     const DaonationToken = await ethers.getContractFactory("DaonationToken");
     const daonationToken = await DaonationToken.deploy();
 
-    const DaonationTimeLock = await ethers.getContractFactory("DaonationTimeLock");
-    const timeLock = await DaonationTimeLock.deploy(0, [], [])
+    const StableMockToken = await ethers.getContractFactory("MockToken");
+    const stableMockToken = await StableMockToken.deploy('StableMock','STM')
 
-    const Daonation = await ethers.getContractFactory("Daonation");
-    const daonation = await Daonation.deploy(daonationToken.address, timeLock.address);
+    const VaquinhaLibrary = await ethers.getContractFactory("VaquinhaLibrary")
+    const vaquinhaLibrary = await VaquinhaLibrary.deploy()
 
-    const proposerRole = await timeLock.PROPOSER_ROLE()
-    const executorRole = await timeLock.EXECUTOR_ROLE()
-    const adminRole = await timeLock.TIMELOCK_ADMIN_ROLE()
+    const Daonation = await ethers.getContractFactory("Daonation", {
+      libraries: {
+        VaquinhaLibrary: vaquinhaLibrary.address,
+      },
+    })
 
-    await timeLock.grantRole(proposerRole, daonation.address)
-    await timeLock.grantRole(executorRole, ethers.constants.AddressZero)
-    await timeLock.revokeRole(adminRole, owner.address)
+    const votationPeriod = 4*24*3600
+    const proposalLockPeriod = 7*24*3600
+    const votationTokenRewardRatio = 100 //1%
+    const donationPeriod = 7*24*3600
+    const daonation = await Daonation.deploy(
+      daonationToken.address,
+      stableMockToken.address,
+      votationPeriod,
+      ethers.utils.parseEther('10000'),
+      proposalLockPeriod,
+      votationTokenRewardRatio,
+      donationPeriod
+    );
+
+    await daonationToken.approve(daonation.address, ethers.constants.MaxUint256)
+    await daonation.addGovernanceTokenRewards(ethers.utils.parseEther('100'))
     
-    return { owner, otherAccount, daonationToken, daonation };
+    return { owner, otherAccount, daonationToken, daonation, beficiary1, beficiary2, donor1, donor2, votationPeriod };
   }
 
-  describe.only("Deployment", function () {
+  describe("Deployment", function () {
 
     it("Should be deployed", async function () {
       
@@ -49,52 +64,51 @@ describe("Daonation", function () {
 
     it("Should be possible to propose a vaquinha", async function () {
       
-      const { daonation } = await loadFixture(deploy);
+      const { daonation, beficiary1 } = await loadFixture(deploy);
 
       const expectedValue = ethers.utils.parseEther('5000')
-      await daonation.proposeVaquinha("test", expectedValue)
+      await daonation.proposeVaquinha("test", expectedValue, beficiary1.address)
 
       const vaquinhasCount = await daonation.vaquinhasCount()
 
       expect(vaquinhasCount).to.eq(1)
+      
+      const vaquinhaId = vaquinhasCount.sub(1)
 
-      const vaquinha = await daonation.vaquinhas(vaquinhasCount.sub(1))
-      expect(vaquinha.aprovada).to.be.eq(false)
+      const vaquinha = await daonation.vaquinhas(vaquinhaId)
       expect(vaquinha.description).to.be.eq("test")
       expect(vaquinha.expectedValue).to.be.eq(expectedValue)
-      expect(await daonation.state(vaquinha.proposal)).to.be.eq(0)
+      expect(await daonation.isVoting(vaquinhaId)).to.be.true
 
     });
 
     it("Should be possible to vote and approve a vaquinha.", async function () {
       
-      const { daonation, daonationToken, owner } = await loadFixture(deploy);
+      const { daonation, daonationToken, owner, beficiary1, votationPeriod } = await loadFixture(deploy);
 
       const expectedValue = ethers.utils.parseEther('5000')
-      await daonation.proposeVaquinha("test", expectedValue)
+      await daonation.proposeVaquinha("test", expectedValue, beficiary1.address)
 
       const vaquinhasCount = await daonation.vaquinhasCount()
       const vaquinhaId = vaquinhasCount.sub(1)
 
       const vaquinha = await daonation.vaquinhas(vaquinhaId)
-      expect(vaquinha.aprovada).to.be.eq(false)
+      expect(await daonation.isDonating(vaquinhaId)).to.be.false
 
-      expect(await daonation.hasVoted(vaquinha.proposal, owner.address)).to.be.false
+      await daonationToken.approve(daonation.address, ethers.constants.MaxUint256)
+      const initialDaonationTokenBalance = await daonationToken.balanceOf(owner.address)
+      const daonationTokenForVoting = initialDaonationTokenBalance.div(10)
+      await daonation.voteForVaquinha(vaquinhaId, daonationTokenForVoting);
+      const finalDaonationTokenBalance = await daonationToken.balanceOf(owner.address)
 
-      await daonationToken.delegate(owner.address)
+      expect(initialDaonationTokenBalance.sub(daonationTokenForVoting))
+        .to.be.eq(finalDaonationTokenBalance)
 
-      await daonation.votarAprovarVaquinha(vaquinhaId);
+      expect(await daonation.isDonating(vaquinhaId)).to.be.false
 
-      expect(await daonation.hasVoted(vaquinha.proposal, owner.address)).to.be.true
+      await time.increase(votationPeriod+1)
 
-      console.log('await ethers.provider.getBlockNumber()', await ethers.provider.getBlockNumber());
-      await time.increase(3600*24*30)
-      console.log('await ethers.provider.getBlockNumber()', await ethers.provider.getBlockNumber());
-      
-      console.log('daonation.proposalDeadline(vaquinha.proposal)', await daonation.proposalDeadline(vaquinha.proposal));
-
-      // await daonation.executarAprovacaoVaquinha(vaquinhaId);
-      await daonation["queue(uint256)"](vaquinha.proposal);
+      expect(await daonation.isDonating(vaquinhaId)).to.be.true
 
     });
 
