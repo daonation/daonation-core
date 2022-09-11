@@ -95,7 +95,7 @@ contract Daonation is IDaonation {
     }
 
     function _lockTokensTo(uint256 vaquinhaId, uint256 tokensToLock) internal{
-        lockedTokensByVaquinha[vaquinhaId][msg.sender] = tokensToLock;
+        lockedTokensByVaquinha[vaquinhaId][msg.sender] += tokensToLock;
         votationToken.safeTransferFrom(msg.sender, address(this), tokensToLock);
     }
 

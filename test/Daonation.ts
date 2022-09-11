@@ -41,11 +41,12 @@ describe("Daonation", function () {
         const proposalLockPeriod = 7 * 24 * 3600
         const votationTokenRewardRatio = 100 //1%
         const donationPeriod = 7 * 24 * 3600
+        const tokensToCreateProposal = ethers.utils.parseEther('10000')
         const daonation = await Daonation.deploy(
             daonationToken.address,
             stableMockToken.address,
             votationPeriod,
-            ethers.utils.parseEther('10000'),
+            tokensToCreateProposal,
             proposalLockPeriod,
             votationTokenRewardRatio,
             donationPeriod
@@ -67,7 +68,7 @@ describe("Daonation", function () {
             owner, otherAccount, daonationToken, daonation,
             beneficiary1, beneficiary2, donor1, donor2,
             votationPeriod, donationPeriod, votationTokenRewardRatio,
-            stableMockToken
+            stableMockToken, tokensToCreateProposal
         };
     }
 
@@ -132,6 +133,67 @@ describe("Daonation", function () {
             await time.increase(votationPeriod + 1)
 
             expect(await daonation.isDonating(vaquinhaId)).to.be.true
+
+        });
+
+        it("Should be possible to unlock the governance token.", async function () {
+
+            const { daonation, daonationToken, owner, otherAccount, beneficiary1, votationPeriod } = await loadFixture(deploy);
+
+            const expectedValue = ethers.utils.parseEther('5000')
+            await daonation.proposeVaquinha("test", expectedValue, beneficiary1.address)
+
+            const vaquinhasCount = await daonation.vaquinhasCount()
+            const vaquinhaId = vaquinhasCount.sub(1)
+
+            const vaquinha = await daonation.vaquinhas(vaquinhaId)
+            expect(await daonation.isDonating(vaquinhaId)).to.be.false
+
+            await daonationToken.approve(daonation.address, ethers.constants.MaxUint256)
+            const daonationTokenBalance = await daonationToken.balanceOf(owner.address)
+            const daonationTokenForVoting = daonationTokenBalance.div(10)
+            await daonationToken.transfer(otherAccount.address, daonationTokenForVoting)
+            await daonation.connect(otherAccount).voteForVaquinha(vaquinhaId, daonationTokenForVoting);
+
+            await time.increase(votationPeriod + 1)
+
+            const initialDaonationTokenBalance = await daonationToken.balanceOf(otherAccount.address)
+            await daonation.connect(otherAccount).unlockTokens(vaquinhaId)
+            const finalDaonationTokenBalance = await daonationToken.balanceOf(otherAccount.address)
+
+            expect(initialDaonationTokenBalance.add(daonationTokenForVoting))
+                .to.be.eq(finalDaonationTokenBalance)
+
+        });
+
+        it("Should be possible to unlock the governance token used to create proposal.", async function () {
+
+            const { daonation, daonationToken, owner, otherAccount, beneficiary1, 
+                votationPeriod, tokensToCreateProposal } = await loadFixture(deploy);
+
+            const expectedValue = ethers.utils.parseEther('5000')
+            await daonation.proposeVaquinha("test", expectedValue, beneficiary1.address)
+
+            const vaquinhasCount = await daonation.vaquinhasCount()
+            const vaquinhaId = vaquinhasCount.sub(1)
+
+            const vaquinha = await daonation.vaquinhas(vaquinhaId)
+            expect(await daonation.isDonating(vaquinhaId)).to.be.false
+
+            await daonationToken.approve(daonation.address, ethers.constants.MaxUint256)
+            const daonationTokenBalance = await daonationToken.balanceOf(owner.address)
+            const daonationTokenForVoting = daonationTokenBalance.div(10)
+            await daonationToken.transfer(otherAccount.address, daonationTokenForVoting)
+            await daonation.connect(otherAccount).voteForVaquinha(vaquinhaId, daonationTokenForVoting);
+
+            await time.increase(votationPeriod + 1)
+
+            const initialDaonationTokenBalance = await daonationToken.balanceOf(owner.address)
+            await daonation.connect(owner).unlockTokens(vaquinhaId)
+            const finalDaonationTokenBalance = await daonationToken.balanceOf(owner.address)
+
+            expect(initialDaonationTokenBalance.add(tokensToCreateProposal))
+                .to.be.eq(finalDaonationTokenBalance)
 
         });
 
@@ -229,6 +291,46 @@ describe("Daonation", function () {
 
             expect(initialBeneficiaryStableTokenBalance.add(donationAmount))
                 .to.be.eq(finalBeneficiaryStableTokenBalance, "Beneficiary stable token balance should be the expected")
+
+        });
+
+        it("Should not be possible to redeem donations twice.", async function () {
+
+            const {
+                daonation, daonationToken, owner, beneficiary1,
+                votationPeriod, donationPeriod, votationTokenRewardRatio,
+                donor1, stableMockToken
+            } = await loadFixture(deploy);
+
+            const expectedValue = ethers.utils.parseEther('5000')
+            await daonation.proposeVaquinha("test", expectedValue, beneficiary1.address)
+
+            const vaquinhasCount = await daonation.vaquinhasCount()
+            const vaquinhaId = vaquinhasCount.sub(1)
+
+            const vaquinha = await daonation.vaquinhas(vaquinhaId)
+
+            await daonationToken.approve(daonation.address, ethers.constants.MaxUint256)
+            const initialDaonationTokenBalance = await daonationToken.balanceOf(owner.address)
+            const daonationTokenForVoting = initialDaonationTokenBalance.div(10)
+            await daonation.voteForVaquinha(vaquinhaId, daonationTokenForVoting);
+
+            await time.increase(votationPeriod + 1)
+
+            const donationAmount = parseEther('100')
+            await daonation.connect(donor1).donate(vaquinhaId, donationAmount)
+
+            expect(await daonation.isFinished(vaquinhaId), 'Should not be finished.').to.be.false
+
+            await time.increase(donationPeriod + 1)
+
+            expect(await daonation.isFinished(vaquinhaId), 'Should be finished.').to.be.true
+
+            await daonation.connect(beneficiary1).redeemDonations(vaquinhaId)
+
+            await expect(
+                daonation.connect(beneficiary1).redeemDonations(vaquinhaId)
+            ).to.be.rejectedWith('DONATIONS ALREADY REDEEMED')
 
         });
 
