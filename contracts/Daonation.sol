@@ -174,4 +174,8 @@ contract Daonation is IDaonation {
         return vaquinhas[vaquinhaId].donating();
     }
 
+    function isFinished(uint256 vaquinhaId) public view returns(bool) {
+        return vaquinhas[vaquinhaId].finished();
+    }
+
 }
