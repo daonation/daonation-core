@@ -5,6 +5,8 @@ import * as dotenv from 'dotenv'
 
 dotenv.config()
 
+import "./tasks/deploytest"
+
 const config: HardhatUserConfig = {
     solidity: {
         version: "0.8.9",
@@ -35,7 +37,7 @@ const config: HardhatUserConfig = {
         mumbai: { //polygon testnet
             url: process.env.MUMBAI_URL,
             chainId: 80001,
-            gasPrice: 5000000000,
+            gasPrice: 100, //5000000000,
             accounts: {
                 mnemonic: process.env.MNEMONIC
             }
